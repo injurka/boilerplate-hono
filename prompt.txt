@@ -1,0 +1,1852 @@
+== Project Prompt ==
+Generated: 2025-05-06T07:08:20.782Z
+Source Directory: /home/evai/my/boilerplate-hono
+Included Files: 36
+Total Size: 39.86 KB
+Format: structured
+====================
+
+=== Project File Structure ===
+├── src
+│   ├── api
+│   │   ├── controllers
+│   │   │   ├── auth.ts
+│   │   │   ├── index.ts
+│   │   │   └── user.ts
+│   │   ├── interfaces
+│   │   │   ├── controller.abstract.ts
+│   │   │   └── index.ts
+│   │   └── mod.ts
+│   ├── middleware
+│   │   ├── index.ts
+│   │   ├── jwt-guard.ts
+│   │   └── prometheus.ts
+│   ├── models
+│   │   ├── auth
+│   │   │   ├── auth.schema.ts
+│   │   │   ├── auth.ts
+│   │   │   ├── github.ts
+│   │   │   ├── google.ts
+│   │   │   └── index.ts
+│   │   ├── shared
+│   │   │   ├── index.ts
+│   │   │   ├── pagination.schema.ts
+│   │   │   └── pagination.ts
+│   │   ├── user
+│   │   │   ├── index.ts
+│   │   │   ├── user.schema.ts
+│   │   │   └── user.ts
+│   │   └── index.ts
+│   ├── services
+│   │   ├── auth
+│   │   │   ├── auth.ts
+│   │   │   ├── index.ts
+│   │   │   └── oauth.ts
+│   │   ├── index.ts
+│   │   └── user.ts
+│   ├── types
+│   │   └── prisma-helpers.ts
+│   ├── utils
+│   │   ├── email.ts
+│   │   ├── jwt.ts
+│   │   ├── logger.ts
+│   │   ├── metrics.ts
+│   │   └── tokens.ts
+│   ├── main.ts
+│   ├── prisma.ts
+│   └── server.ts
+└── eslint.config.ts
+============================
+
+=== File List ===
+- eslint.config.ts (0.23 KB)
+- src/api/controllers/auth.ts (10.47 KB)
+- src/api/controllers/index.ts (0.04 KB)
+- src/api/controllers/user.ts (2.14 KB)
+- src/api/interfaces/controller.abstract.ts (0.39 KB)
+- src/api/interfaces/index.ts (0.04 KB)
+- src/api/mod.ts (0.40 KB)
+- src/main.ts (0.15 KB)
+- src/middleware/index.ts (0.06 KB)
+- src/middleware/jwt-guard.ts (1.19 KB)
+- src/middleware/prometheus.ts (1.19 KB)
+- src/models/auth/auth.schema.ts (1.87 KB)
+- src/models/auth/auth.ts (0.22 KB)
+- src/models/auth/github.ts (2.02 KB)
+- src/models/auth/google.ts (0.72 KB)
+- src/models/auth/index.ts (0.10 KB)
+- src/models/index.ts (0.07 KB)
+- src/models/shared/index.ts (0.06 KB)
+- src/models/shared/pagination.schema.ts (0.83 KB)
+- src/models/shared/pagination.ts (0.24 KB)
+- src/models/user/index.ts (0.05 KB)
+- src/models/user/user.schema.ts (0.31 KB)
+- src/models/user/user.ts (0.32 KB)
+- src/prisma.ts (0.10 KB)
+- src/server.ts (2.48 KB)
+- src/services/auth/auth.ts (2.25 KB)
+- src/services/auth/index.ts (0.05 KB)
+- src/services/auth/oauth.ts (5.80 KB)
+- src/services/index.ts (0.04 KB)
+- src/services/user.ts (1.53 KB)
+- src/types/prisma-helpers.ts (0.23 KB)
+- src/utils/email.ts (0.31 KB)
+- src/utils/jwt.ts (0.70 KB)
+- src/utils/logger.ts (1.07 KB)
+- src/utils/metrics.ts (0.47 KB)
+- src/utils/tokens.ts (1.73 KB)
+=================
+
+=== File Contents ===
+
+--- File: eslint.config.ts ---
+
+import config from '@antfu/eslint-config'
+
+export default config({
+  formatters: true,
+  rules: {
+    'unicorn/prefer-node-protocol': 'off',
+    'node/prefer-global/process': 'off',
+  },
+  ignores: ['static', 'prisma', 'data'],
+})
+
+--- File: src/api/controllers/auth.ts ---
+
+import { createRoute, z } from '@hono/zod-openapi'
+import { getCookie, setCookie } from 'hono/cookie'
+import { HTTPException } from 'hono/http-exception'
+import AController from '~/api/interfaces/controller.abstract'
+import { jwtGuard } from '~/middleware'
+import { UserSchema } from '~/models'
+import { AuthUserSchema, RefreshAuthSchema, SignInUserPayloadSchema, SignUpUserPayloadSchema } from '~/models/auth'
+import { AuthService, OAuthService } from '~/services'
+
+const TAG = 'auth'
+
+class AuthController extends AController {
+  private service = new AuthService()
+  private oauthService = new OAuthService()
+
+  constructor() {
+    super('/auth')
+
+    this.me()
+    this.signUp()
+    this.signIn()
+    this.refresh()
+    this.logout()
+    this.sendVerificationCode()
+    this.oauthGithub()
+    this.oauthGithubCallback()
+    this.oauthGoogle()
+    this.oauthGoogleCallback()
+  }
+
+  // Base Auth
+
+  private me = () => {
+    const route = createRoute({
+      method: 'get',
+      path: `${this.path}/me`,
+      tags: [TAG],
+      security: [{ bearerAuth: [] }],
+      responses: {
+        200: {
+          content: {
+            'application/json': {
+              schema: UserSchema.openapi({
+                description: 'Authenticated user details',
+              }),
+            },
+          },
+          description: 'Auth user',
+        },
+      },
+    })
+
+    this.router.use(route.path, jwtGuard)
+    this.router.openapi(
+      route,
+      async (c) => {
+        const user = c.get('user')
+
+        return c.json(UserSchema.parse(user), 200)
+      },
+    )
+  }
+
+  private signUp = () => {
+    const route = createRoute({
+      method: 'post',
+      path: `${this.path}/sign-up`,
+      tags: [TAG],
+      request: {
+        body: {
+          content: {
+            'application/json': {
+              schema: SignUpUserPayloadSchema,
+            },
+          },
+        },
+      },
+      responses: {
+        200: {
+          content: {
+            'application/json': {
+              schema: AuthUserSchema,
+            },
+          },
+          description: 'Create the user',
+        },
+      },
+    })
+
+    this.router.openapi(
+      route,
+      async (c) => {
+        const body = c.req.valid('json')
+        const data = await this.service.signUp(body)
+
+        // Устанавливаем cookie для refresh token с правильными параметрами
+        setCookie(c, 'refreshToken', data.refreshToken, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          path: '/',
+          sameSite: 'Lax',
+          maxAge: 30 * 24 * 60 * 60, // 30 дней
+        })
+
+        return c.json(AuthUserSchema.parse(data), 200)
+      },
+    )
+  }
+
+  private signIn = () => {
+    const route = createRoute({
+      method: 'post',
+      path: `${this.path}/sign-in`,
+      tags: [TAG],
+      request: {
+        body: {
+          content: {
+            'application/json': {
+              schema: SignInUserPayloadSchema,
+            },
+          },
+        },
+      },
+      responses: {
+        200: {
+          content: {
+            'application/json': {
+              schema: AuthUserSchema,
+            },
+          },
+          description: 'Auth user',
+        },
+      },
+    })
+
+    this.router.openapi(
+      route,
+      async (c) => {
+        const body = c.req.valid('json')
+        const data = await this.service.signIn(body)
+
+        return c.json(AuthUserSchema.parse(data), 200)
+      },
+    )
+  }
+
+  private refresh = () => {
+    const route = createRoute({
+      method: 'post',
+      path: `${this.path}/refresh`,
+      tags: [TAG],
+      request: {
+        body: {
+          content: {
+            'application/json': {
+              schema: z.object({
+                refreshToken: z.string(),
+              }),
+            },
+          },
+        },
+      },
+      responses: {
+        200: {
+          content: {
+            'application/json': {
+              schema: RefreshAuthSchema,
+            },
+          },
+          description: 'New token pair',
+        },
+      },
+    })
+
+    this.router.openapi(
+      route,
+      async (c) => {
+        const { refreshToken } = c.req.valid('json')
+
+        try {
+          const tokens = await this.service.refreshToken(refreshToken)
+          const payload = {
+            token: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
+          }
+
+          const responseData = RefreshAuthSchema.parse(payload)
+
+          return c.json(responseData, 200)
+        }
+        catch {
+          throw new HTTPException(401, { message: 'Invalid refresh token' })
+        }
+      },
+    )
+  }
+
+  private logout = () => {
+    const route = createRoute({
+      method: 'post',
+      path: `${this.path}/logout`,
+      tags: [TAG],
+      security: [{ bearerAuth: [] }],
+      responses: {
+        200: {
+          description: 'Successfully logged out',
+        },
+      },
+    })
+
+    this.router.use(route.path, jwtGuard)
+    this.router.openapi(
+      route,
+      async (c) => {
+        const user = c.get('user')
+
+        await this.service.logout(user.id)
+
+        // Очищаем cookie при выходе
+        setCookie(c, 'refreshToken', '', {
+          expires: new Date(0),
+          path: '/',
+        })
+
+        return c.text('Successfully logged out', 200)
+      },
+    )
+  }
+
+  private sendVerificationCode = () => {
+    const route = createRoute({
+      method: 'post',
+      path: `${this.path}/send-verification-code`,
+      tags: [TAG],
+      request: {
+        body: {
+          content: {
+            'application/json': {
+              schema: z.object({
+                email: z.string().email(),
+              }),
+            },
+          },
+        },
+      },
+      responses: {
+        200: {
+          description: 'Verification code sent',
+        },
+      },
+    })
+
+    this.router.openapi(
+      route,
+      async (c) => {
+        const { email } = c.req.valid('json')
+
+        await this.service.createVerificationCode(email)
+
+        return c.text('Verification code sent', 200)
+      },
+    )
+  }
+
+  // OAuth
+  // -> GitHub
+
+  private oauthGithub = () => {
+    const route = createRoute({
+      method: 'get',
+      path: `${this.path}/github`,
+      tags: [TAG],
+      responses: {
+        302: {
+          description: 'Redirect to GitHub OAuth',
+          headers: {
+            Location: {
+              schema: { type: 'string' },
+              description: 'GitHub OAuth URL',
+            },
+          },
+        },
+      },
+    })
+
+    this.router.openapi(
+      route,
+      async (c) => {
+        const state = Bun.randomUUIDv7()
+        const url = new URL('https://github.com/login/oauth/authorize')
+
+        url.searchParams.set('client_id', process.env.GITHUB_CLIENT_ID!)
+        url.searchParams.set('redirect_uri', process.env.GITHUB_CALLBACK!)
+        url.searchParams.set('state', state)
+        url.searchParams.set('scope', 'user:email')
+
+        setCookie(c, 'oauth_state', state, {
+          httpOnly: true,
+          path: '/',
+          sameSite: 'Lax',
+          maxAge: 10 * 60, // 10 минут
+        })
+
+        return c.redirect(url.toString())
+      },
+    )
+  }
+
+  private oauthGithubCallback = () => {
+    const route = createRoute({
+      method: 'get',
+      path: `${this.path}/github/callback`,
+      tags: [TAG],
+      request: {
+        query: z.object({
+          code: z.string(),
+          state: z.string(),
+        }),
+      },
+      responses: {
+        302: {
+          description: 'OAuth callback handler',
+          headers: z.object({
+            Location: z.string().describe('Frontend redirect URL'),
+          }),
+        },
+      },
+    })
+    this.router.openapi(
+      route,
+      async (c) => {
+        const { code, state } = c.req.valid('query')
+        const savedState = getCookie(c, 'oauth_state')
+        if (!state || state !== savedState) {
+          throw new HTTPException(401, { message: 'Invalid state' })
+        }
+        const { token, refreshToken } = await this.oauthService.github(code, state)
+        setCookie(c, 'oauth_state', '', { expires: new Date(0), path: '/' })
+
+        return c.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${token}&refreshToken=${refreshToken}`)
+      },
+    )
+  }
+
+  // -> Google
+  private oauthGoogle = () => {
+    const route = createRoute({
+      method: 'get',
+      path: `${this.path}/google`,
+      tags: [TAG],
+      responses: {
+        302: {
+          description: 'Redirect to Google OAuth',
+          headers: {
+            Location: {
+              schema: { type: 'string' },
+              description: 'Google OAuth URL',
+            },
+          },
+        },
+      },
+    })
+
+    this.router.openapi(
+      route,
+      async (c) => {
+        const state = Bun.randomUUIDv7()
+        const url = new URL('https://accounts.google.com/o/oauth2/v2/auth')
+
+        url.searchParams.set('client_id', process.env.GOOGLE_CLIENT_ID!)
+        url.searchParams.set('redirect_uri', process.env.GOOGLE_CALLBACK!)
+        url.searchParams.set('response_type', 'code')
+        url.searchParams.set('state', state)
+        url.searchParams.set('scope', 'openid email profile')
+        url.searchParams.set('access_type', 'offline')
+        url.searchParams.set('prompt', 'consent') // Добавлено для получения refresh token каждый раз
+
+        setCookie(c, 'oauth_state', state, {
+          httpOnly: true,
+          path: '/',
+          sameSite: 'Lax',
+          maxAge: 10 * 60, // 10 минут
+        })
+
+        return c.redirect(url.toString())
+      },
+    )
+  }
+
+  private oauthGoogleCallback = () => {
+    const route = createRoute({
+      method: 'get',
+      path: `${this.path}/google/callback`,
+      tags: [TAG],
+      request: {
+        query: z.object({
+          code: z.string(),
+          state: z.string(),
+        }),
+      },
+      responses: {
+        302: {
+          description: 'OAuth callback handler',
+          headers: z.object({
+            Location: z.string().describe('Frontend redirect URL'),
+          }),
+        },
+      },
+    })
+    this.router.openapi(
+      route,
+      async (c) => {
+        const { code, state } = c.req.valid('query')
+        const savedState = getCookie(c, 'oauth_state')
+        if (!state || state !== savedState) {
+          throw new HTTPException(401, { message: 'Invalid state' })
+        }
+        const { token, refreshToken } = await this.oauthService.google(code, state)
+        setCookie(c, 'oauth_state', '', { expires: new Date(0), path: '/' })
+
+        return c.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${token}&refreshToken=${refreshToken}`)
+      },
+    )
+  }
+}
+
+export { AuthController }
+
+--- File: src/api/controllers/index.ts ---
+
+export * from './auth'
+export * from './user'
+
+--- File: src/api/controllers/user.ts ---
+
+import { createRoute, z } from '@hono/zod-openapi'
+import AController from '~/api/interfaces/controller.abstract'
+import {
+  PermissionSchema,
+  UserSchema,
+} from '~/models/user'
+import { UserService } from '~/services'
+
+const TAG = 'user'
+
+class UserController extends AController {
+  private service = new UserService()
+
+  constructor() {
+    super('/user')
+
+    this.getById()
+    this.getPermissionsByUserId()
+  }
+
+  private getById = () => {
+    const route = createRoute({
+      method: 'get',
+      path: `${this.path}/{id}`,
+      tags: [TAG],
+      request: {
+        params: z.object({
+          id: z
+            .string()
+            .openapi({
+              param: {
+                name: 'id',
+                in: 'path',
+              },
+            }),
+        }),
+      },
+      responses: {
+        200: {
+          content: {
+            'application/json': {
+              schema: UserSchema,
+            },
+          },
+          description: 'Retrieve the user by id',
+        },
+      },
+    })
+
+    this.router.openapi(
+      route,
+      async (c) => {
+        const { id } = c.req.valid('param')
+        const data = await this.service.getByWhere({ where: { id: +id } })
+
+        return c.json(UserSchema.parse(data), 200)
+      },
+    )
+  }
+
+  private getPermissionsByUserId = () => {
+    const route = createRoute({
+      method: 'get',
+      path: `${this.path}/{id}/permisson`,
+      tags: [TAG],
+      request: {
+        params: z.object({
+          id: z
+            .string()
+            .openapi({
+              param: {
+                name: 'id',
+                in: 'path',
+              },
+            }),
+        }),
+      },
+      responses: {
+        200: {
+          content: {
+            'application/json': {
+              schema: PermissionSchema,
+            },
+          },
+          description: 'Retrieve permission for the user by id',
+        },
+      },
+    })
+
+    this.router.openapi(
+      route,
+      async (c) => {
+        const { id } = c.req.valid('param')
+        const data = await this.service.getPermissionsByUserId(+id)
+
+        return c.json(PermissionSchema.parse(data), 200)
+      },
+    )
+  }
+}
+
+export { UserController }
+
+--- File: src/api/interfaces/controller.abstract.ts ---
+
+import type { Permission, User } from '~/models/user'
+import { OpenAPIHono as Hono } from '@hono/zod-openapi'
+
+interface ContextVariables {
+  jwt: string
+  user: User
+  userPermissions: Permission[]
+}
+
+abstract class AController {
+  public router = new Hono<{ Variables: ContextVariables }>()
+
+  constructor(public path: string) {
+    this.router.basePath(path)
+  }
+}
+
+export default AController
+
+--- File: src/api/interfaces/index.ts ---
+
+export * from './controller.abstract'
+
+--- File: src/api/mod.ts ---
+
+import type { OpenAPIHono as Hono } from '@hono/zod-openapi'
+
+import {
+  AuthController,
+  UserController,
+} from './controllers'
+
+const COMBINE_V1 = {
+  BASE_PATH: '/api/v1',
+  CONTROLLERS: [
+    new AuthController(),
+    new UserController(),
+  ],
+}
+
+export function setupRoutes(server: Hono) {
+  COMBINE_V1.CONTROLLERS.forEach((controller) => {
+    server.route(COMBINE_V1.BASE_PATH, controller.router)
+  })
+}
+
+--- File: src/main.ts ---
+
+import Server from './server'
+
+const app = Server.getServer()
+
+export default {
+  port: import.meta.env.PORT,
+  fetch: app.fetch,
+  idleTimeout: 120,
+}
+
+--- File: src/middleware/index.ts ---
+
+export * from './jwt-guard'
+export * from './prometheus'
+
+--- File: src/middleware/jwt-guard.ts ---
+
+import type { Context, Next } from 'hono'
+import { UserService } from '~/services'
+import { jwtDecode } from '~/utils/jwt'
+
+async function jwtGuard(c: Context, next: Next) {
+  const authHeader = c.req.header('x-authorization') ?? c.req.header('authorization') ?? c.req.header('Authorization')
+
+  if (!authHeader) {
+    return c.json({ message: 'Авторизуйтесь для доступа' }, 401)
+  }
+
+  const token = authHeader.startsWith('Bearer ')
+    ? authHeader.split(' ')[1]
+    : authHeader
+
+  if (!token) {
+    return c.json({ message: 'Токен авторизации не найден' }, 401)
+  }
+
+  try {
+    const userService = new UserService()
+
+    const decoded = await jwtDecode(token)
+    const user = await userService.getUserByUserId(decoded.userId)
+    const userPermissions = await userService.getPermissionsByUserId(user.id)
+
+    if (!user) {
+      return c.json({ message: 'Некорректный пользователь' }, 401)
+    }
+
+    c.set('jwt', token)
+    c.set('user', user)
+    c.set('permissions', userPermissions)
+
+    await next()
+  }
+  catch {
+    return c.json({ message: 'Некорректный токен авторизации' }, 401)
+  }
+}
+
+export { jwtGuard }
+
+--- File: src/middleware/prometheus.ts ---
+
+import type { Context, Next } from 'hono'
+import { PromCounterBrowser, PromCounterLocation, PromCounterRoute } from '~/utils/metrics'
+
+/**
+ * Middleware function for Prometheus metrics.
+ * Increments counters for browser type, location, and route.
+ *
+ * @param ctx - The Hono context object.
+ * @param next - The next middleware function.
+ */
+async function prometheusMiddleware(ctx: Context, next: Next) {
+  const { req } = ctx
+  const route = req.path
+
+  const userAgent = req.header('user-agent')
+  const acceptLanguage = req.header('accept-language')
+
+  // Извлечение типа браузера
+  const browserRegex = /Chrome|Firefox|Safari|Opera|IE|Edge|Yandex|UCBrowser/i
+  const browserMatch = userAgent?.match(browserRegex)
+  const browser = browserMatch?.[0] ?? 'Unknown'
+
+  if (browser) {
+    PromCounterBrowser.inc({ browser })
+  }
+
+  // Извлечение локации
+  const locationRegex = /ru|en|fr|de|es/i
+  const locationMatch = acceptLanguage?.match(locationRegex)
+  const location = locationMatch?.[0] ?? 'Unknown'
+
+  if (location) {
+    PromCounterLocation.inc({ location })
+  }
+
+  if (route) {
+    PromCounterRoute.inc({ route })
+  }
+
+  await next()
+}
+
+export { prometheusMiddleware }
+
+--- File: src/models/auth/auth.schema.ts ---
+
+import { z } from '@hono/zod-openapi'
+import { UserSchema } from '../user'
+
+const AuthUserSchema = z.object({
+  token: z.string()
+    .openapi({
+      example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+      description: 'JWT token for authenticated requests',
+    }),
+  refreshToken: z.string().optional().openapi({
+    example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+    description: 'JWT refresh token',
+  }),
+  user: UserSchema.openapi({
+    description: 'Authenticated user details',
+  }),
+}).openapi('AuthResponse')
+
+const SignUpUserPayloadSchema = z.object({
+  email: z.string().email().openapi({
+    example: 'user@example.com',
+    description: 'User email for registration',
+    format: 'email',
+  }),
+  email_verification_code: z.string().length(6).openapi({
+    example: '123456',
+    description: '6-digit verification code sent to email',
+  }),
+  password: z.string().min(8).max(20).openapi({
+    example: 'securePassword123!',
+    description: 'Password (8-20 characters)',
+    minLength: 8,
+    maxLength: 20,
+  }),
+}).openapi('SignUpPayload')
+
+const SignInUserPayloadSchema = z.object({
+  email: z.string().email().openapi({
+    example: 'test@test.test',
+    description: 'Registered email address',
+    format: 'email',
+  }),
+  password: z.string().min(8).max(20).openapi({
+    example: 'testtesttest',
+    description: 'Account password',
+    minLength: 8,
+    maxLength: 20,
+  }),
+}).openapi('SignInPayload')
+
+const RefreshAuthSchema = z.object({
+  token: z.string()
+    .openapi({
+      example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+      description: 'JWT token for authenticated requests',
+    }),
+  refreshToken: z.string()
+    .openapi({
+      example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+      description: 'JWT refresh token',
+    }),
+}).openapi('AuthResponse')
+
+export {
+  AuthUserSchema,
+  RefreshAuthSchema,
+  SignInUserPayloadSchema,
+  SignUpUserPayloadSchema,
+}
+
+--- File: src/models/auth/auth.ts ---
+
+interface SignUpUserPayload {
+  password: string
+  email: string
+  email_verification_code: string
+}
+
+interface SignInUserPayload {
+  password: string
+  email: string
+}
+
+export type {
+  SignInUserPayload,
+  SignUpUserPayload,
+}
+
+--- File: src/models/auth/github.ts ---
+
+interface GitHubTokenData {
+  access_token: string
+  token_type: 'bearer' | 'basic'
+  scope: string
+}
+
+interface GitHubUser {
+  login: string
+  id: number
+  node_id: string
+  avatar_url: string
+  gravatar_id: string
+  url: string
+  html_url: string
+  followers_url: string
+  following_url: string
+  gists_url: string
+  starred_url: string
+  subscriptions_url: string
+  organizations_url: string
+  repos_url: string
+  events_url: string
+  received_events_url: string
+  type: 'User' | 'Organization'
+  site_admin: boolean
+  name: string | null
+  company: string | null
+  blog: string
+  location: string | null
+  email: string | null
+  hireable: boolean | null
+  bio: string | null
+  twitter_username: string | null
+  public_repos: number
+  public_gists: number
+  followers: number
+  following: number
+  created_at: string // ISO 8601 format
+  updated_at: string // ISO 8601 format
+  // Дополнительные поля
+  user_view_type?: 'public' | 'private'
+  notification_email?: string | null
+}
+
+interface GitHubEmail {
+  email: string
+  primary: boolean
+  verified: boolean
+  visibility: 'public' | 'private' | null
+}
+
+interface GitHubNormalizedUser {
+  id: string
+  email?: string
+  name: string
+  username: string
+  avatarUrl: string
+  profileUrl: string
+  createdAt: Date
+  updatedAt: Date
+  emails: Array<{
+    address: string
+    primary: boolean
+    verified: boolean
+  }>
+}
+
+function normalizeGitHubUser(
+  user: GitHubUser,
+  emails: GitHubEmail[] = [],
+): GitHubNormalizedUser {
+  return {
+    id: user.id.toString(),
+    email: emails.find(e => e.primary && e.verified)?.email || user.email || undefined,
+    name: user.name || user.login,
+    username: user.login,
+    avatarUrl: user.avatar_url,
+    profileUrl: user.html_url,
+    createdAt: new Date(user.created_at),
+    updatedAt: new Date(user.updated_at),
+    emails: emails.map(e => ({
+      address: e.email,
+      primary: e.primary,
+      verified: e.verified,
+    })),
+  }
+}
+
+export type { GitHubEmail, GitHubNormalizedUser, GitHubTokenData, GitHubUser }
+export { normalizeGitHubUser }
+
+--- File: src/models/auth/google.ts ---
+
+interface GoogleTokenData {
+  access_token: string
+  expires_in: number
+  token_type: string
+  id_token: string
+}
+
+interface GoogleUser {
+  sub: string
+  name: string
+  given_name: string
+  family_name: string
+  picture: string
+  email: string
+  email_verified: boolean
+  locale: string
+}
+
+interface GoogleNormalizedUser {
+  id: string
+  email?: string
+  name: string
+  avatarUrl: string
+}
+
+function normalizeGoogleUser(
+  user: GoogleUser,
+): GoogleNormalizedUser {
+  return {
+    id: user.sub.toString(),
+    email: (user.email && user.email_verified) ? user.email : undefined,
+    name: user.name,
+    avatarUrl: user.picture,
+  }
+}
+
+export { normalizeGoogleUser }
+export type { GoogleNormalizedUser, GoogleTokenData, GoogleUser }
+
+--- File: src/models/auth/index.ts ---
+
+export * from './auth'
+export * from './auth.schema'
+
+export * from './github'
+export * from './google'
+
+--- File: src/models/index.ts ---
+
+export * from './auth'
+export * from './shared'
+export * from './user'
+
+--- File: src/models/shared/index.ts ---
+
+export * from './pagination'
+export * from './pagination.schema'
+
+--- File: src/models/shared/pagination.schema.ts ---
+
+import { z } from '@hono/zod-openapi'
+
+const PageSchema = z
+  .string()
+  .default('1')
+  .transform(val => Number.parseInt(val, 10))
+  .refine(val => !Number.isNaN(val) && val > 0, { message: 'Invalid value for page' })
+  .openapi({
+    param: {
+      name: 'page',
+      in: 'query',
+    },
+  })
+
+const PageLimitSchema = z
+  .string()
+  .default('10')
+  .transform(val => Number.parseInt(val, 10))
+  .refine(val => !Number.isNaN(val) && val > 0, { message: 'Invalid value for limit' })
+  .openapi({
+    param: {
+      name: 'limit',
+      in: 'query',
+    },
+  })
+
+function DataListSchema<T extends z.ZodObject<any>>(data: T) {
+  return z.object({
+    data: z.array(data),
+    pagination: z.object({
+      page: z.number(),
+      limit: z.number(),
+      total: z.number(),
+    }),
+  })
+}
+
+export { DataListSchema, PageLimitSchema, PageSchema }
+
+--- File: src/models/shared/pagination.ts ---
+
+import type { z } from '@hono/zod-openapi'
+import type { PageLimitSchema, PageSchema } from './pagination.schema'
+
+type Page = z.infer<typeof PageSchema>
+type PageLimit = z.infer<typeof PageLimitSchema>
+
+export type {
+  Page,
+  PageLimit,
+}
+
+--- File: src/models/user/index.ts ---
+
+export * from './user'
+export * from './user.schema'
+
+--- File: src/models/user/user.schema.ts ---
+
+import { z } from '@hono/zod-openapi'
+import { Permission } from './user'
+
+const UserSchema = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  createdAt: z.date(),
+  updatedAt: z.date(),
+})
+
+const PermissionSchema = z.array(z.nativeEnum(Permission)).optional()
+
+export {
+  PermissionSchema,
+  UserSchema,
+}
+
+--- File: src/models/user/user.ts ---
+
+interface User {
+  id: number
+  email: string
+  name?: string
+  avatarUrl?: string
+
+  githubId?: string
+  googleId?: string
+
+  createdAt: Date
+  updatedAt: Date
+}
+
+export enum Permission {
+  AiGenerate = 'AiGenerate',
+}
+const permissions: Permission[] = [Permission.AiGenerate]
+
+export {
+  permissions,
+}
+export type {
+  User,
+}
+
+--- File: src/prisma.ts ---
+
+import { PrismaClient } from '@prisma/client'
+
+const prisma = new PrismaClient()
+
+export { prisma }
+
+--- File: src/server.ts ---
+
+import type { Context } from 'hono'
+import { OpenAPIHono as Hono } from '@hono/zod-openapi'
+import { serveStatic } from 'hono/bun'
+import { cors } from 'hono/cors'
+import { prettyJSON } from 'hono/pretty-json'
+import { register } from 'prom-client'
+import { setupRoutes } from '~/api/mod'
+import { prometheusMiddleware } from '~/middleware/prometheus'
+import setupSwagger from '~/swagger'
+import { Logger } from '~/utils/logger'
+
+const logger = new Logger()
+
+class Server {
+  private server: Hono
+
+  constructor() {
+    this.server = new Hono()
+
+    this.initializeMiddlewares()
+    this.initializeRestControllers()
+    this.initializeStaticFileRoutes()
+  }
+
+  public getServer() {
+    return this.server
+  }
+
+  private initializeMiddlewares() {
+    try {
+      this.server.openAPIRegistry.registerComponent(
+        'securitySchemes',
+        'bearerAuth',
+        {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          description: 'JWT Authorization header using the Bearer scheme.',
+        },
+      )
+      this.server.use(prettyJSON())
+      this.server.use(cors())
+      this.server.use(prometheusMiddleware)
+      this.server.onError((err, c) => c.json({ message: err.message }, 500))
+
+      logger.log('Middlewares')
+    }
+    catch (e) {
+      logger.error('Middlewares', e)
+    }
+  }
+
+  private initializeRestControllers() {
+    try {
+      this.server.get('/healthz', (c: Context): Response => c.text('healthy', 200))
+      this.server.get('/logs', (c: Context): Response => c.json(logger.logs, 200))
+      this.server.get('/metrics', async (c: Context): Promise<Response> => {
+        c.set('Content-Type', 'text/plain; version=0.0.4')
+        return c.text(await register.metrics(), 200)
+      })
+
+      setupSwagger(this.server)
+      setupRoutes(this.server)
+
+      logger.log('Controllers')
+    }
+    catch (e) {
+      logger.error('Controllers', e)
+    }
+  }
+
+  private initializeStaticFileRoutes() {
+    try {
+      this.server.use(
+        '/static/*',
+        serveStatic({
+          root: '.',
+          precompressed: true,
+          onFound: (_path, c) => {
+            c.header('Cache-Control', `public, immutable, max-age=31536000`)
+          },
+          onNotFound: (path, c) => {
+            logger.log(`${path} is not found, you access ${c.req.path}`)
+          },
+        }),
+      )
+
+      logger.log('StaticFileRoutes')
+    }
+    catch (e) {
+      logger.error('StaticFileRoutes', e)
+    }
+  }
+}
+
+const server = new Server()
+
+export { logger }
+export default server
+
+--- File: src/services/auth/auth.ts ---
+
+import type { SignInUserPayload, SignUpUserPayload } from '~/models/auth'
+import type { User } from '~/models/user'
+import { prisma } from '~/prisma'
+import { sendVerificationCode } from '~/utils/email'
+import { generateTokens, invalidateTokens, refreshTokens } from '~/utils/tokens'
+
+class AuthService {
+  signUp = async (payload: SignUpUserPayload) => {
+    const storedCode = await prisma.emailVerificationCode.findFirst({
+      where: { email: payload.email },
+    })
+
+    if (!storedCode || storedCode.code !== payload.email_verification_code) {
+      throw new Error('Invalid verification code')
+    }
+
+    const hashedPassword = await Bun.password.hash(payload.password)
+
+    const user = await prisma.user.create({
+      data: {
+        email: payload.email,
+        password: hashedPassword,
+      },
+    })
+
+    const transformedUser = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    } as User
+
+    const tokens = await generateTokens(user.id)
+
+    return {
+      token: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      user: transformedUser,
+    }
+  }
+
+  signIn = async (payload: SignInUserPayload) => {
+    const user = await prisma.user.findFirstOrThrow({ where: { email: payload.email } })
+
+    const isPasswordValid = await Bun.password.verify(payload.password, user.password!)
+    if (!isPasswordValid) {
+      throw new Error('Invalid password')
+    }
+
+    const transformedUser = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    } as User
+
+    const tokens = await generateTokens(user.id)
+
+    return {
+      token: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      user: transformedUser,
+    }
+  }
+
+  refreshToken = async (refreshToken: string) => {
+    return refreshTokens(refreshToken)
+  }
+
+  logout = async (userId: number) => {
+    return invalidateTokens(userId)
+  }
+
+  createVerificationCode = async (email: string) => {
+    const code = Math.random().toString(36).substring(2, 8)
+
+    await prisma.emailVerificationCode.create({
+      data: {
+        email,
+        code,
+      },
+    })
+
+    await sendVerificationCode(email, code)
+  }
+}
+
+export { AuthService }
+
+--- File: src/services/auth/index.ts ---
+
+export * from './auth'
+export * from './oauth'
+
+--- File: src/services/auth/oauth.ts ---
+
+import type { GitHubEmail, GitHubNormalizedUser, GitHubTokenData, GitHubUser, GoogleNormalizedUser, GoogleTokenData, GoogleUser } from '~/models'
+import { HTTPException } from 'hono/http-exception'
+import {
+  normalizeGitHubUser,
+  normalizeGoogleUser,
+} from '~/models'
+import { prisma } from '~/prisma'
+import { generateTokens } from '~/utils/tokens'
+
+class OAuthService {
+  github = async (code: string, state: string) => {
+    const tokenResponse = await fetch('https://github.com/login/oauth/access_token', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        client_id: process.env.GITHUB_CLIENT_ID,
+        client_secret: process.env.GITHUB_CLIENT_SECRET,
+        code,
+        state,
+      }),
+    })
+
+    if (!tokenResponse.ok) {
+      throw new HTTPException(401, { message: 'GitHub OAuth token exchange failed' })
+    }
+
+    const tokenData = await tokenResponse.json() as GitHubTokenData
+    const accessToken = tokenData.access_token
+
+    const [userResponse, emailsResponse] = await Promise.all([
+      fetch('https://api.github.com/user', {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+        },
+      }),
+      fetch('https://api.github.com/user/emails', {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+        },
+      }),
+    ])
+
+    if (!userResponse.ok) {
+      throw new HTTPException(401, { message: 'Failed to fetch GitHub user data' })
+    }
+
+    const user = await userResponse.json() as GitHubUser
+    const emails = await emailsResponse.json() as GitHubEmail[]
+
+    const normalizedUser: GitHubNormalizedUser = normalizeGitHubUser(user, emails)
+
+    const oauthExistingUser = await prisma.user.findUnique({
+      where: { githubId: normalizedUser.id },
+    })
+    const emailExistingUser = await prisma.user.findUnique({
+      where: { email: normalizedUser.email },
+    })
+
+    let userId: number | null = null
+
+    if (oauthExistingUser) {
+      const { id } = await prisma.user.update({
+        where: {
+          id: oauthExistingUser.id,
+        },
+        data: {
+          updatedAt: new Date(),
+        },
+      })
+      userId = id
+    }
+    else if (emailExistingUser) {
+      const { id } = await prisma.user.update({
+        where: {
+          id: emailExistingUser.id,
+        },
+        data: {
+          githubId: normalizedUser.id,
+          name: normalizedUser.name || emailExistingUser.name,
+          avatarUrl: normalizedUser.avatarUrl || emailExistingUser.avatarUrl,
+          updatedAt: new Date(),
+        },
+      })
+      userId = id
+    }
+    else {
+      const { id } = await prisma.user.create({
+        data: {
+          githubId: normalizedUser.id,
+          email: normalizedUser.email,
+          name: normalizedUser.name,
+          avatarUrl: normalizedUser.avatarUrl,
+          UserPermission: {
+            create: [{ permission: 'AiGenerate' }],
+          },
+        },
+        include: {
+          UserPermission: true,
+        },
+      })
+      userId = id
+    }
+
+    const { accessToken: token, refreshToken } = await generateTokens(userId)
+
+    return { token, refreshToken }
+  }
+
+  google = async (code: string, _: string) => {
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.GOOGLE_CLIENT_ID!,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+        redirect_uri: process.env.GOOGLE_CALLBACK!,
+        grant_type: 'authorization_code',
+      }),
+    })
+
+    if (!tokenResponse.ok) {
+      throw new HTTPException(401, { message: 'Google OAuth token exchange failed' })
+    }
+
+    const tokenData = await tokenResponse.json() as GoogleTokenData
+
+    const userResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: {
+        Authorization: `Bearer ${tokenData.access_token}`,
+      },
+    })
+
+    if (!userResponse.ok) {
+      throw new HTTPException(401, { message: 'Failed to fetch Google user data' })
+    }
+
+    const user = await userResponse.json() as GoogleUser
+    const normalizedUser: GoogleNormalizedUser = normalizeGoogleUser(user)
+
+    const oauthExistingUser = await prisma.user.findUnique({
+      where: { googleId: normalizedUser.id },
+    })
+    const emailExistingUser = await prisma.user.findUnique({
+      where: { email: normalizedUser.email },
+    })
+
+    let userId: number | null = null
+
+    if (oauthExistingUser) {
+      const { id } = await prisma.user.update({
+        where: {
+          id: oauthExistingUser.id,
+        },
+        data: {
+          updatedAt: new Date(),
+        },
+      })
+      userId = id
+    }
+    else if (emailExistingUser) {
+      const { id } = await prisma.user.update({
+        where: {
+          id: emailExistingUser.id,
+        },
+        data: {
+          googleId: normalizedUser.id,
+          name: normalizedUser.name || emailExistingUser.name,
+          avatarUrl: normalizedUser.avatarUrl || emailExistingUser.avatarUrl,
+          updatedAt: new Date(),
+        },
+      })
+      userId = id
+    }
+    else {
+      const { id } = await prisma.user.create({
+        data: {
+          googleId: normalizedUser.id,
+          email: normalizedUser.email,
+          name: normalizedUser.name,
+          avatarUrl: normalizedUser.avatarUrl,
+          UserPermission: {
+            create: [{ permission: 'AiGenerate' }],
+          },
+        },
+        include: {
+          UserPermission: true,
+        },
+      })
+      userId = id
+    }
+
+    const { accessToken: token, refreshToken } = await generateTokens(userId)
+
+    return { token, refreshToken }
+  }
+}
+
+export { OAuthService }
+
+--- File: src/services/index.ts ---
+
+export * from './auth'
+export * from './user'
+
+--- File: src/services/user.ts ---
+
+import type { $Enums, Prisma } from '@prisma/client'
+import type { User } from '~/models/user'
+import type { IUpdatePayload, IWherePayload } from '~/types/prisma-helpers'
+import { prisma } from '~/prisma'
+
+class UserService {
+  //* Create
+
+  //* Read
+  getAll = async () => {
+    return prisma.user.findMany()
+  }
+
+  getAllByWhere = async <T>(payload: IWherePayload<T, Prisma.UserWhereInput>) => {
+    return prisma.user.findMany({ ...payload.query, where: payload.where })
+  }
+
+  getByWhere = async <T>(payload: IWherePayload<T, Prisma.UserWhereInput>) => {
+    return prisma.user.findFirstOrThrow({ ...payload.query, where: payload.where })
+  }
+
+  getUserByUserId = async (userId: number) => {
+    const data = await prisma.user.findFirstOrThrow({ where: { id: userId } })
+    const user = {
+      id: data.id,
+      email: data.email,
+      name: data.name,
+      createdAt: data.createdAt,
+      updatedAt: data.updatedAt,
+    } as User
+
+    return user
+  }
+
+  getPermissionsByUserId = async (userId: number): Promise<$Enums.Permission[]> => {
+    const permissions = await prisma.userPermission.findMany({
+      where: {
+        userId,
+      },
+      select: {
+        permission: true,
+      },
+    })
+
+    return permissions.map(permission => permission.permission)
+  }
+
+  //* Update
+  update = async <T>(
+    payload: IUpdatePayload<T, Prisma.UserWhereUniqueInput, Prisma.UserUpdateInput>,
+  ) => {
+    return prisma.user.update({
+      ...payload.query,
+      where: payload.where,
+      data: payload.data,
+    })
+  }
+  //* Delete
+}
+
+export { UserService }
+
+--- File: src/types/prisma-helpers.ts ---
+
+export interface IWherePayload<T, W> {
+  query?: T
+  where?: W
+}
+
+export interface IUpdatePayload<T, W, D> extends Pick<IWherePayload<T, W>, 'query'> {
+  where: W
+  data: D
+}
+
+export interface IReadPayload<Q, W> {
+  query?: Q
+  where?: W
+}
+
+--- File: src/utils/email.ts ---
+
+import { Resend } from 'resend'
+
+const resend = new Resend(process.env.RESEND_API_KEY)
+
+export async function sendVerificationCode(email: string, code: string) {
+  return await resend.emails.send({
+    from: 'injurka@gmail.com',
+    to: [email],
+    subject: 'Verification code',
+    html: `<h1> ${code} </p>`,
+  })
+}
+
+--- File: src/utils/jwt.ts ---
+
+import type { User } from '~/models/user'
+import { sign, verify } from 'hono/jwt'
+
+type WithRequired<T, K extends keyof T> = T & { [P in K]-?: T[P] }
+type JwtPayload = WithRequired<Partial<User>, 'id'>
+
+async function jwtDecode(token: string) {
+  const secret = process.env.JWT_SECRET!
+  const decoded = await verify(token, secret) as { userId: number }
+
+  return decoded
+}
+
+async function jwtEncode(user: JwtPayload, options?: { exp: number }) {
+  const secret = process.env.JWT_SECRET!
+  const jwtPayload = {
+    userId: user.id,
+    exp: Math.floor(Date.now() / 1000) + (options?.exp ?? (60 * 60 * 24)),
+  }
+  const token = await sign(jwtPayload, secret)
+
+  return token
+}
+
+export {
+  jwtDecode,
+  jwtEncode,
+}
+
+--- File: src/utils/logger.ts ---
+
+/* eslint-disable no-console */
+// deno-lint-ignore-file no-explicit-any
+
+export enum LogType {
+  Log = 'log',
+  Info = 'info',
+  Error = 'error',
+  Success = 'success',
+}
+
+export interface Log {
+  message: string
+  value?: any
+  type: LogType
+  createdAt?: Date
+}
+
+export class Logger {
+  logs: Log[] = []
+
+  log = (message: string) => {
+    this.logs.push({
+      message,
+      type: LogType.Log,
+      createdAt: new Date(),
+    })
+
+    console.log('\x1B[33m%s\x1B[0m', message)
+  }
+
+  info = (message: string) => {
+    this.logs.push({
+      message,
+      type: LogType.Info,
+      createdAt: new Date(),
+    })
+
+    console.log('\x1B[34m%s\x1B[0m', message)
+  }
+
+  error = (message: string, value?: any) => {
+    this.logs.push({
+      message,
+      value,
+      type: LogType.Error,
+      createdAt: new Date(),
+    })
+
+    console.log('\x1B[31m%s\x1B[0m', `❌ ${message}`, value)
+  }
+
+  success = (message: string) => {
+    this.logs.push({
+      message,
+      type: LogType.Success,
+      createdAt: new Date(),
+    })
+
+    console.log('\x1B[32m%s\x1B[0m', `✅ ${message}`)
+  }
+}
+
+--- File: src/utils/metrics.ts ---
+
+import { Counter } from 'prom-client'
+
+export const PromCounterRoute = new Counter({
+  name: 'http_requests_total',
+  help: 'Counter for requests to the API',
+  labelNames: ['route'],
+})
+
+export const PromCounterBrowser = new Counter({
+  name: 'browser',
+  help: 'Counter for browser type from request',
+  labelNames: ['browser'],
+})
+
+export const PromCounterLocation = new Counter({
+  name: 'location',
+  help: 'Counter for location from request',
+  labelNames: ['location'],
+})
+
+--- File: src/utils/tokens.ts ---
+
+import { prisma } from '~/prisma'
+import { jwtEncode } from '~/utils/jwt'
+
+// Время жизни токенов
+const ACCESS_TOKEN_EXPIRY = 60 * 60 * 24 // 24 часа в секундах
+const REFRESH_TOKEN_EXPIRY = 30 * 24 * 60 * 60 // 30 дней в секундах
+
+export async function generateTokens(userId: number) {
+  const accessToken = await jwtEncode({ id: userId }, { exp: ACCESS_TOKEN_EXPIRY })
+  const refreshToken = Bun.randomUUIDv7()
+
+  // Сохраняем refresh token в базу данных
+  await prisma.refreshToken.create({
+    data: {
+      token: refreshToken,
+      userId,
+      expiresAt: new Date(Date.now() + REFRESH_TOKEN_EXPIRY * 1000),
+    },
+  })
+
+  return {
+    accessToken,
+    refreshToken,
+    accessTokenExpiry: ACCESS_TOKEN_EXPIRY,
+    refreshTokenExpiry: REFRESH_TOKEN_EXPIRY,
+  }
+}
+
+export async function refreshTokens(refreshToken: string) {
+  // Ищем refresh token в базе данных
+  const storedToken = await prisma.refreshToken.findUnique({
+    where: { token: refreshToken },
+    include: { User: true },
+  })
+
+  // Проверяем, существует ли токен и не истек ли срок его действия
+  if (!storedToken || storedToken.expiresAt < new Date()) {
+    throw new Error('Invalid or expired refresh token')
+  }
+
+  // Удаляем использованный refresh token
+  await prisma.refreshToken.delete({
+    where: { id: storedToken.id },
+  })
+
+  // Генерируем новую пару токенов
+  return generateTokens(storedToken.userId)
+}
+
+export async function invalidateTokens(userId: number) {
+  // Удаляем все refresh токены пользователя
+  await prisma.refreshToken.deleteMany({
+    where: { userId },
+  })
+}
+
+=====================

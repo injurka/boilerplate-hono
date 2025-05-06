@@ -2,31 +2,13 @@ import type { Log } from '~/utils/logger'
 import { PrismaClient } from '@prisma/client'
 import { Logger, LogType } from '~/utils/logger'
 
-import { mockCms } from './data/cms'
-import { mockHieroglyphKeys } from './data/hieroglyph-key'
-import { mockHsk } from './data/hsk'
-import { mockFinals, mockFinalsTone, mockInitials, mockInitialsFinals } from './data/pinyin'
-import { mockSplitGlyphsAll } from './data/split-glyphs-all'
 import { mockUser } from './data/user'
 import { mockUserPermission } from './data/user-permission'
 
 const seeds = [
-  // Keys
-  { name: 'hieroglyphKey', data: [mockHieroglyphKeys] },
-  // Content
-  { name: 'cms', data: [mockCms] },
   // User
   { name: 'user', data: [mockUser] },
   { name: 'userPermission', data: [mockUserPermission] },
-  // Llvm
-  { name: 'splitGlyphsAll', data: [mockSplitGlyphsAll] },
-  // Pinyin
-  { name: 'pinyinFinal', data: [mockFinals] },
-  { name: 'pinyinInitial', data: [mockInitials] },
-  { name: 'pinyinFinalsTone', data: [mockFinalsTone] },
-  { name: 'pinyinInitialsFinals', data: [mockInitialsFinals] },
-  // Hsk
-  { name: 'hieroglyphHsk', data: [mockHsk] },
 ]
 
 const prisma = new PrismaClient()
